@@ -505,12 +505,11 @@ context_methods! {
 
     /// Returns the current gateway heartbeat latency ([`::serenity::gateway::Shard::latency()`]).
     ///
-    /// If the shard has just connected, this value is zero.
+    /// If the shard has just connected, `None` is returned.
     await (ping self)
-    (pub async fn ping(self) -> std::time::Duration) {
-        let zero = std::time::Duration::ZERO;
-        let Some(runner) = self.serenity_context().runners.get(&self.serenity_context().shard_id) else { return zero };
-        runner.0.latency.unwrap_or(zero)
+    (pub async fn ping(self) -> Option<std::time::Duration>) {
+        let ctx = self.serenity_context();
+        ctx.runners.get(&ctx.shard_id)?.value().0.latency
     }
 }
 
