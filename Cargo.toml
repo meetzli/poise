@@ -23,8 +23,8 @@ indexmap = "2.2.6"
 [dependencies.serenity]
 default-features = false
 features = ["builder", "gateway", "model", "utils", "collector", "framework"]
-git = "https://github.com/serenity-rs/serenity"
-branch = "next"
+git = "https://github.com/jamesbt365/serenity/"
+branch = "components-v2"
 
 [dev-dependencies]
 # For the examples
