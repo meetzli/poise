@@ -142,13 +142,12 @@ pub fn generate_parameters(inv: &Invocation) -> Result<Vec<proc_macro2::TokenStr
 
 pub fn generate_slash_action(inv: &Invocation) -> Result<proc_macro2::TokenStream, syn::Error> {
     if let Some(desc) = &inv.description {
-        let length = desc.chars().count();
-        if length > 100 {
+        if desc.len() > 100 {
             return Err(syn::Error::new(
                 inv.function.span(),
                 format!(
                     "slash command description too long ({} chars, must be max 100)",
-                    length
+                    desc.len()
                 ),
             ));
         }

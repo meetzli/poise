@@ -1,17 +1,17 @@
 [package]
-authors = ["kangalio <jannik.a.schaper@web.de>"]
+authors = ["kangalio <jannik.a.schaper@web.de>", "bytemate"]
 edition = "2021"
 name = "poise"
-version = "0.6.1"
+version = "0.6.2-bytemate"
 rust-version = "1.80.0"
-description = "A Discord bot framework for serenity"
+description = "A Discord bot framework for serenity (bytemate fork)"
 license = "MIT"
-repository = "https://github.com/serenity-rs/poise/"
+repository = "https://github.com/bytematebot/poise/"
 
 [dependencies]
 tokio = { version = "1.25.1", default-features = false } # for async in general
 futures-util = { version = "0.3.13", default-features = false } # for async in general
-poise_macros = { path = "macros", version = "0.6.1" } # remember to update the version on changes!
+poise_macros = { path = "macros", version = "0.6.2-bytemate" } # remember to update the version on changes!
 async-trait = { version = "0.1.48", default-features = false } # various traits
 regex = { version = "1.6.0", default-features = false, features = ["std"] } # prefix
 tracing = { version = "0.1.40", features = ["log"] } # warning about weird state
@@ -22,8 +22,9 @@ indexmap = "2.2.6"
 
 [dependencies.serenity]
 default-features = false
-features = ["builder", "client", "gateway", "model", "utils", "collector", "framework"]
-version = "0.12.4"
+features = ["builder", "gateway", "model", "utils", "collector", "framework", "transport_compression_zstd"]
+git = "https://github.com/serenity-rs/serenity"
+rev = "5746fad"
 
 [dev-dependencies]
 # For the examples
@@ -36,7 +37,7 @@ fluent-syntax = "0.11"
 rand = "0.8.5"
 
 [features]
-default = ["serenity/rustls_backend", "cache", "chrono", "handle_panics"]
+default = ["serenity/rustls_backend", "cache", "chrono", "handle_panics", "serenity/transport_compression_zstd"]
 chrono = ["serenity/chrono"]
 cache = ["serenity/cache"]
 # No-op feature because serenity/collector is now enabled by default

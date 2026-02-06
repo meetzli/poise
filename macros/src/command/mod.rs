@@ -47,6 +47,7 @@ pub struct CommandArgs {
     nsfw_only: bool,
     identifying_name: Option<String>,
     category: Option<String>,
+    module: Option<String>,
     custom_data: Option<syn::Expr>,
 
     manual_cooldowns: Option<bool>,
@@ -303,6 +304,7 @@ fn generate_command(mut inv: Invocation) -> Result<proc_macro2::TokenStream, dar
     let hide_in_help = &inv.args.hide_in_help;
     let description = wrap_option_to_string(inv.description.as_ref());
     let category = wrap_option_to_string(inv.args.category.as_ref());
+    let module = wrap_option_to_string(inv.args.module.as_ref());
 
     let manual_cooldowns = wrap_option(inv.args.manual_cooldowns);
     let cooldown_config = generate_cooldown_config(&inv.args);
@@ -378,6 +380,7 @@ fn generate_command(mut inv: Invocation) -> Result<proc_macro2::TokenStream, dar
                 identifying_name: Cow::Borrowed(#identifying_name),
                 source_code_name: Cow::Borrowed(#function_name),
                 category: #category,
+                module: #module,
                 description: #description,
                 description_localizations: #description_localizations,
                 help_text: #help_text,

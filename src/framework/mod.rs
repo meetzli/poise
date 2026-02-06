@@ -4,10 +4,7 @@ use std::{borrow::Cow, sync::Arc};
 
 pub use builder::*;
 
-use crate::{
-    serenity_prelude::{self as serenity, TeamMemberRole},
-    BoxFuture,
-};
+use crate::serenity_prelude::{self as serenity, TeamMemberRole};
 
 mod builder;
 
@@ -22,29 +19,10 @@ mod builder;
 ///
 /// You can build a bot without [`Framework`]: see the `manual_dispatch` example in the repository
 pub struct Framework<U, E> {
-    /// Stores user data. Is initialized on first Ready event
-    user_data: std::sync::OnceLock<U>,
     /// Stores bot ID. Is initialized on first Ready event
     bot_id: std::sync::OnceLock<serenity::UserId>,
     /// Stores the framework options
     options: crate::FrameworkOptions<U, E>,
-
-    /// Initialized to Some during construction; so shouldn't be None at any observable point
-    shard_manager: Option<Arc<serenity::ShardManager>>,
-    /// Filled with Some on construction. Taken out and executed on first Ready gateway event
-    setup: std::sync::Mutex<
-        Option<
-            Box<
-                dyn Send
-                    + Sync
-                    + for<'a> FnOnce(
-                        &'a serenity::Context,
-                        &'a serenity::Ready,
-                        &'a Self,
-                    ) -> BoxFuture<'a, Result<U, E>>,
-            >,
-        >,
-    >,
 
     /// Handle to the background task in order to `abort()` it on `Drop`
     edit_tracker_purge_task: Option<tokio::task::JoinHandle<()>>,
@@ -66,31 +44,15 @@ impl<U, E> Framework<U, E> {
         FrameworkBuilder::default()
     }
 
-    /// Setup a new [`Framework`]. For more ergonomic setup, please see [`FrameworkBuilder`]
-    ///
-    /// The user data callback is invoked as soon as the bot is logged in. That way, bot data like
-    /// user ID or connected guilds can be made available to the user data setup function. The user
-    /// data setup is not allowed to return Result because there would be no reasonable
-    /// course of action on error.
-    pub fn new<F>(options: crate::FrameworkOptions<U, E>, setup: F) -> Self
+    /// Setup a new [`Framework`].
+    pub fn new(options: crate::FrameworkOptions<U, E>) -> Self
     where
-        F: Send
-            + Sync
-            + 'static
-            + for<'a> FnOnce(
-                &'a serenity::Context,
-                &'a serenity::Ready,
-                &'a Self,
-            ) -> BoxFuture<'a, Result<U, E>>,
-        U: Send + Sync + 'static,
+        U: Send + Sync + 'static + 'static,
         E: Send + 'static,
     {
         Self {
-            user_data: std::sync::OnceLock::new(),
             bot_id: std::sync::OnceLock::new(),
-            setup: std::sync::Mutex::new(Some(Box::new(setup))),
             edit_tracker_purge_task: None,
-            shard_manager: None,
             options,
         }
     }
@@ -98,25 +60,6 @@ impl<U, E> Framework<U, E> {
     /// Return the stored framework options, including commands.
     pub fn options(&self) -> &crate::FrameworkOptions<U, E> {
         &self.options
-    }
-
-    /// Returns the serenity's client shard manager.
-    // Returns a reference so you can plug it into [`FrameworkContext`]
-    pub fn shard_manager(&self) -> &Arc<serenity::ShardManager> {
-        self.shard_manager
-            .as_ref()
-            .expect("framework should have started")
-    }
-
-    /// Retrieves user data, or blocks until it has been initialized (once the Ready event has been
-    /// received).
-    pub async fn user_data(&self) -> &U {
-        loop {
-            match self.user_data.get() {
-                Some(x) => break x,
-                None => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
-            }
-        }
     }
 }
 
@@ -129,7 +72,7 @@ impl<U, E> Drop for Framework<U, E> {
 }
 
 #[serenity::async_trait]
-impl<U: Send + Sync, E: Send + Sync> serenity::Framework for Framework<U, E> {
+impl<U: Send + Sync + 'static, E: Send + Sync> serenity::Framework for Framework<U, E> {
     async fn init(&mut self, client: &serenity::Client) {
         set_qualified_names(&mut self.options.commands);
 
@@ -137,8 +80,6 @@ impl<U: Send + Sync, E: Send + Sync> serenity::Framework for Framework<U, E> {
             &self.options.prefix_options,
             client.shard_manager.intents(),
         );
-
-        self.shard_manager = Some(client.shard_manager.clone());
 
         if self.options.initialize_owners {
             if let Err(e) = insert_owners_from_http(
@@ -158,45 +99,24 @@ impl<U: Send + Sync, E: Send + Sync> serenity::Framework for Framework<U, E> {
         }
     }
 
-    async fn dispatch(&self, ctx: serenity::Context, event: serenity::FullEvent) {
+    async fn dispatch(&self, ctx: &serenity::Context, event: &serenity::FullEvent) {
         raw_dispatch_event(self, ctx, event).await
     }
 }
 
-/// If the incoming event is Ready, this method executes the user data setup logic
+/// If the incoming event is Ready, this method sets up [`Framework::bot_id`].
 /// Otherwise, it forwards the event to [`crate::dispatch_event`]
 async fn raw_dispatch_event<U, E>(
     framework: &Framework<U, E>,
-    ctx: serenity::Context,
-    event: serenity::FullEvent,
+    serenity_context: &serenity::Context,
+    event: &serenity::FullEvent,
 ) where
-    U: Send + Sync,
+    U: Send + Sync + 'static,
 {
-    if let serenity::FullEvent::Ready { data_about_bot } = &event {
+    if let serenity::FullEvent::Ready { data_about_bot, .. } = event {
         let _: Result<_, _> = framework.bot_id.set(data_about_bot.user.id);
-        let setup = Option::take(&mut *framework.setup.lock().unwrap());
-        if let Some(setup) = setup {
-            match setup(&ctx, data_about_bot, framework).await {
-                Ok(user_data) => {
-                    let _: Result<_, _> = framework.user_data.set(user_data);
-                }
-                Err(error) => {
-                    (framework.options.on_error)(crate::FrameworkError::Setup {
-                        error,
-                        framework,
-                        data_about_bot,
-                        ctx: &ctx,
-                    })
-                    .await
-                }
-            }
-        } else {
-            // ignoring duplicate Discord bot ready event
-            // (happens regularly when bot is online for long period of time)
-        }
     }
 
-    let user_data = framework.user_data().await;
     #[cfg(not(feature = "cache"))]
     let bot_id = *framework
         .bot_id
@@ -205,10 +125,8 @@ async fn raw_dispatch_event<U, E>(
     let framework = crate::FrameworkContext {
         #[cfg(not(feature = "cache"))]
         bot_id,
-        serenity_context: &ctx,
+        serenity_context,
         options: &framework.options,
-        user_data,
-        shard_manager: framework.shard_manager(),
     };
     crate::dispatch_event(framework, event).await;
 }

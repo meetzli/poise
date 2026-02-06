@@ -48,23 +48,23 @@ macro_rules! context_methods {
         // pub $(async $($dummy:block)?)? fn $fn_name:ident $()
         // $fn_name:ident ($($sig:tt)*) $body:block
         $($await:ident)? ( $fn_name:ident $self:ident $($arg:ident)* )
-        ( $($sig:tt)* ) $body:block
+        ( $($sig:tt)* ) $(where $b1:lifetime : $b2:lifetime)? $body:block
     )* ) => {
-        impl<'a, U, E> Context<'a, U, E> { $(
+        impl<'a, U: Send + Sync + 'static, E> Context<'a, U, E> { $(
             $( #[$($attrs)*] )*
-            $($sig)* $body
+            $($sig)* $(where $b1:$b2)* $body
         )* }
 
-        impl<'a, U, E> crate::PrefixContext<'a, U, E> { $(
+        impl<'a, U: Send + Sync + 'static, E> crate::PrefixContext<'a, U, E> { $(
             $( #[$($attrs)*] )*
-            $($sig)* {
+            $($sig)* $(where $b1:$b2)* {
                 $crate::Context::Prefix($self).$fn_name($($arg)*) $(.$await)?
             }
         )* }
 
-        impl<'a, U, E> crate::ApplicationContext<'a, U, E> { $(
+        impl<'a, U: Send + Sync + 'static, E> crate::ApplicationContext<'a, U, E> { $(
             $( #[$($attrs)*] )*
-            $($sig)* {
+            $($sig)* $(where $b1:$b2)* {
                 $crate::Context::Application($self).$fn_name($($arg)*) $(.$await)?
             }
         )* }
@@ -116,7 +116,7 @@ context_methods! {
             Self::Prefix(ctx) => Some(
                 ctx.msg
                     .channel_id
-                    .start_typing(&ctx.serenity_context().http),
+                    .start_typing(ctx.serenity_context().http.clone()),
             ),
         })
     }
@@ -125,10 +125,7 @@ context_methods! {
     ///
     /// Note: panics when called in an autocomplete context!
     await (say self text)
-    (pub async fn say(
-        self,
-        text: impl Into<String>,
-    ) -> Result<crate::ReplyHandle<'a>, serenity::Error>) {
+    (pub async fn say<'arg>(self, text: impl Into<Cow<'arg, str>>) -> Result<crate::ReplyHandle<'a>, serenity::Error>) {
         crate::say_reply(self, text).await
     }
 
@@ -144,7 +141,7 @@ context_methods! {
     await (reply self text)
     (pub async fn reply(
         self,
-        text: impl Into<String>,
+        text: impl Into<Cow<'_, str>>,
     ) -> Result<crate::ReplyHandle<'a>, serenity::Error>) {
         self.send(crate::CreateReply::default().content(text).reply(true)).await
     }
@@ -155,7 +152,7 @@ context_methods! {
     await (send self builder)
     (pub async fn send(
         self,
-        builder: crate::CreateReply,
+        builder: crate::CreateReply<'_>,
     ) -> Result<crate::ReplyHandle<'a>, serenity::Error>) {
         crate::send_reply(self, builder).await
     }
@@ -195,13 +192,13 @@ context_methods! {
 
     /// Return a reference to your custom user data
     (data self)
-    (pub fn data(self) -> &'a U) {
-        self.framework().user_data
+    (pub fn data(self) -> std::sync::Arc<U>) {
+        self.framework().user_data()
     }
 
     /// Return the channel ID of this context
     (channel_id self)
-    (pub fn channel_id(self) -> serenity::ChannelId) {
+    (pub fn channel_id(self) -> serenity::GenericChannelId) {
         match self {
             Self::Application(ctx) => ctx.interaction.channel_id,
             Self::Prefix(ctx) => ctx.msg.channel_id,
@@ -217,14 +214,11 @@ context_methods! {
         }
     }
 
-    /// Return the guild channel of this context, if we are inside a guild.
+    /// Return the channel of this context.
     #[cfg(feature = "cache")]
-    await (guild_channel self)
-    (pub async fn guild_channel(self) -> Option<serenity::GuildChannel>) {
-        if let Ok(serenity::Channel::Guild(guild_channel)) = self.channel_id().to_channel(self.serenity_context()).await {
-            return Some(guild_channel);
-        }
-        None
+    await (channel self)
+    (pub async fn channel(self) -> Option<serenity::Channel>) {
+        self.channel_id().to_channel(self.serenity_context(), self.guild_id()).await.ok()
     }
 
     // Doesn't fit in with the rest of the functions here but it's convenient
@@ -232,7 +226,7 @@ context_methods! {
     #[cfg(feature = "cache")]
     (guild self)
     (pub fn guild(self) -> Option<serenity::GuildRef<'a>>) {
-        self.guild_id()?.to_guild_cached(self.serenity_context())
+        self.guild_id()?.to_guild_cached(self.cache())
     }
 
     // Doesn't fit in with the rest of the functions here but it's convenient
@@ -394,8 +388,6 @@ context_methods! {
                 }
                 string += &ctx.command.name;
                 for arg in ctx.args {
-                    #[allow(unused_imports)] // required for simd-json
-                    use ::serenity::json::*;
                     use std::fmt::Write as _;
 
                     string += " ";
@@ -411,7 +403,7 @@ context_methods! {
                         serenity::ResolvedValue::Number(x) => write!(string, "{}", x),
                         serenity::ResolvedValue::String(x) => write!(string, "{}", x),
                         serenity::ResolvedValue::Channel(x) => {
-                            write!(string, "#{}", x.name.as_deref().unwrap_or(""))
+                            write!(string, "#{}", x.base().name.as_deref().unwrap_or(""))
                         }
                         serenity::ResolvedValue::Role(x) => write!(string, "@{}", x.name),
                         serenity::ResolvedValue::User(x, _) => {
@@ -439,7 +431,7 @@ context_methods! {
                 }
                 string
             }
-            Context::Prefix(ctx) => ctx.msg.content.clone(),
+            Context::Prefix(ctx) => ctx.msg.content.to_string(),
         }
     }
 
@@ -482,7 +474,7 @@ context_methods! {
     /// convert [`crate::CreateReply`] instances into Discord requests.
     #[allow(unused_mut)] // side effect of how macro works
     (reply_builder self builder)
-    (pub fn reply_builder(self, mut builder: crate::CreateReply) -> crate::CreateReply) {
+    (pub fn reply_builder<'args>(self, mut builder: crate::CreateReply<'args>) -> crate::CreateReply<'args>) {
         let fw_options = self.framework().options();
         builder.ephemeral = builder.ephemeral.or(Some(self.command().ephemeral));
         builder.allowed_mentions = builder.allowed_mentions.or_else(|| fw_options.allowed_mentions.clone());
@@ -513,16 +505,11 @@ context_methods! {
 
     /// Returns the current gateway heartbeat latency ([`::serenity::gateway::Shard::latency()`]).
     ///
-    /// If the shard has just connected, this value is zero.
+    /// If the shard has just connected, `None` is returned.
     await (ping self)
-    (pub async fn ping(self) -> std::time::Duration) {
-        match self.framework().shard_manager.runners.lock().await.get(&self.serenity_context().shard_id) {
-            Some(runner) => runner.latency.unwrap_or(std::time::Duration::ZERO),
-            None => {
-                tracing::error!("current shard is not in shard_manager.runners, this shouldn't happen");
-                std::time::Duration::ZERO
-            }
-        }
+    (pub async fn ping(self) -> Option<std::time::Duration>) {
+        let ctx = self.serenity_context();
+        ctx.runners.get(&ctx.shard_id)?.value().0.latency
     }
 }
 
@@ -596,29 +583,24 @@ impl<'a, U, E> Context<'a, U, E> {
 macro_rules! context_trait_impls {
     ($($type:tt)*) => {
         #[cfg(feature = "cache")]
-        impl<U, E> AsRef<serenity::Cache> for $($type)*<'_, U, E> {
+        impl<U: Send + Sync + 'static, E> AsRef<serenity::Cache> for $($type)*<'_, U, E> {
             fn as_ref(&self) -> &serenity::Cache {
                 &self.serenity_context().cache
             }
         }
-        impl<U, E> AsRef<serenity::Http> for $($type)*<'_, U, E> {
+        impl<U: Send + Sync + 'static, E> AsRef<serenity::Http> for $($type)*<'_, U, E> {
             fn as_ref(&self) -> &serenity::Http {
                 &self.serenity_context().http
             }
         }
-        impl<U, E> AsRef<serenity::ShardMessenger> for $($type)*<'_, U, E> {
-            fn as_ref(&self) -> &serenity::ShardMessenger {
-                &self.serenity_context().shard
-            }
-        }
         // Originally added as part of component interaction modals; not sure if this impl is really
         // required by anything else... It makes sense to have though imo
-        impl<U, E> AsRef<serenity::Context> for $($type)*<'_, U, E> {
+        impl<U: Send + Sync + 'static, E> AsRef<serenity::Context> for $($type)*<'_, U, E> {
             fn as_ref(&self) -> &serenity::Context {
                 self.serenity_context()
             }
         }
-        impl<U: Send + Sync, E> serenity::CacheHttp for $($type)*<'_, U, E> {
+        impl<U: Send + Sync + 'static, E> serenity::CacheHttp for $($type)*<'_, U, E> {
             fn http(&self) -> &serenity::Http {
                 &self.serenity_context().http
             }
@@ -639,7 +621,7 @@ pub struct PartialContext<'a, U, E> {
     /// ID of the guild, if not invoked in DMs
     pub guild_id: Option<serenity::GuildId>,
     /// ID of the invocation channel
-    pub channel_id: serenity::ChannelId,
+    pub channel_id: serenity::GenericChannelId,
     /// ID of the invocation author
     pub author: &'a serenity::User,
     /// Useful if you need the list of commands, for example for a custom help command
@@ -655,7 +637,7 @@ impl<U, E> Clone for PartialContext<'_, U, E> {
     }
 }
 
-impl<'a, U, E> From<Context<'a, U, E>> for PartialContext<'a, U, E> {
+impl<'a, U: Send + Sync + 'static, E> From<Context<'a, U, E>> for PartialContext<'a, U, E> {
     fn from(ctx: Context<'a, U, E>) -> Self {
         Self {
             guild_id: ctx.guild_id(),

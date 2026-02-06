@@ -29,9 +29,6 @@ impl<T: ChoiceParameter> crate::SlashArgument for T {
         _: &serenity::CommandInteraction,
         value: &serenity::ResolvedValue<'_>,
     ) -> ::std::result::Result<Self, crate::SlashArgError> {
-        #[allow(unused_imports)]
-        use ::serenity::json::*; // Required for simd-json :|
-
         let choice_key = match value {
             serenity::ResolvedValue::Integer(int) => *int as u64,
             _ => {
@@ -46,7 +43,7 @@ impl<T: ChoiceParameter> crate::SlashArgument for T {
         })
     }
 
-    fn create(builder: serenity::CreateCommandOption) -> serenity::CreateCommandOption {
+    fn create(builder: serenity::CreateCommandOption<'_>) -> serenity::CreateCommandOption<'_> {
         builder.kind(serenity::CommandOptionType::Integer)
     }
 

@@ -1,29 +1,32 @@
 //! The builder to create a new reply
 
+use std::borrow::Cow;
+
 use crate::serenity_prelude as serenity;
 
 /// Message builder that abstracts over prefix and application command responses
 #[derive(Default, Clone)]
 #[allow(clippy::missing_docs_in_private_items)] // docs on setters
-pub struct CreateReply {
-    content: Option<String>,
-    embeds: Vec<serenity::CreateEmbed>,
-    attachments: Vec<serenity::CreateAttachment>,
+pub struct CreateReply<'a> {
+    content: Option<Cow<'a, str>>,
+    embeds: Vec<serenity::CreateEmbed<'a>>,
+    attachments: Vec<serenity::CreateAttachment<'a>>,
     pub(crate) ephemeral: Option<bool>,
-    components: Option<Vec<serenity::CreateActionRow>>,
-    pub(crate) allowed_mentions: Option<serenity::CreateAllowedMentions>,
-    poll: Option<serenity::CreatePoll<serenity::builder::create_poll::Ready>>,
+    components: Option<Cow<'a, [serenity::CreateComponent<'a>]>>,
+    pub(crate) allowed_mentions: Option<serenity::CreateAllowedMentions<'a>>,
+    poll: Option<serenity::CreatePoll<'a, serenity::builder::create_poll::Ready>>,
     reply: bool,
+    flags: Option<serenity::MessageFlags>,
 }
 
-impl CreateReply {
+impl<'a> CreateReply<'a> {
     /// Creates a blank CreateReply. Equivalent to [`Self::default`].
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the content of the message.
-    pub fn content(mut self, content: impl Into<String>) -> Self {
+    pub fn content(mut self, content: impl Into<Cow<'a, str>>) -> Self {
         self.content = Some(content.into());
         self
     }
@@ -31,7 +34,7 @@ impl CreateReply {
     /// Adds an embed to the message.
     ///
     /// Existing embeds are kept.
-    pub fn embed(mut self, embed: serenity::CreateEmbed) -> Self {
+    pub fn embed(mut self, embed: serenity::CreateEmbed<'a>) -> Self {
         self.embeds.push(embed);
         self
     }
@@ -39,13 +42,16 @@ impl CreateReply {
     /// Set components (buttons and select menus) for this message.
     ///
     /// Any previously set components will be overwritten.
-    pub fn components(mut self, components: Vec<serenity::CreateActionRow>) -> Self {
-        self.components = Some(components);
+    pub fn components(
+        mut self,
+        components: impl Into<Cow<'a, [serenity::CreateComponent<'a>]>>,
+    ) -> Self {
+        self.components = Some(components.into());
         self
     }
 
     /// Add an attachment.
-    pub fn attachment(mut self, attachment: serenity::CreateAttachment) -> Self {
+    pub fn attachment(mut self, attachment: serenity::CreateAttachment<'a>) -> Self {
         self.attachments.push(attachment);
         self
     }
@@ -61,7 +67,10 @@ impl CreateReply {
     /// Set the allowed mentions for the message.
     ///
     /// See [`serenity::CreateAllowedMentions`] for more information.
-    pub fn allowed_mentions(mut self, allowed_mentions: serenity::CreateAllowedMentions) -> Self {
+    pub fn allowed_mentions(
+        mut self,
+        allowed_mentions: serenity::CreateAllowedMentions<'a>,
+    ) -> Self {
         self.allowed_mentions = Some(allowed_mentions);
         self
     }
@@ -71,7 +80,7 @@ impl CreateReply {
     /// See [`serenity::CreatePoll`] for more information on creating and configuring a poll.
     pub fn poll(
         mut self,
-        poll: serenity::CreatePoll<serenity::builder::create_poll::Ready>,
+        poll: serenity::CreatePoll<'a, serenity::builder::create_poll::Ready>,
     ) -> Self {
         self.poll = Some(poll);
         self
@@ -86,16 +95,22 @@ impl CreateReply {
         self.reply = reply;
         self
     }
+
+    /// Sets the flags for this message.
+    pub fn flags(mut self, flags: serenity::MessageFlags) -> Self {
+        self.flags = Some(flags);
+        self
+    }
 }
 
 /// Methods to create a message builder from any type from this [`CreateReply`]. Used by poise
 /// internally to actually send a response to Discord
-impl CreateReply {
+impl<'a> CreateReply<'a> {
     /// Serialize this response builder to a [`serenity::CreateInteractionResponseMessage`]
     pub fn to_slash_initial_response(
         self,
-        mut builder: serenity::CreateInteractionResponseMessage,
-    ) -> serenity::CreateInteractionResponseMessage {
+        mut builder: serenity::CreateInteractionResponseMessage<'a>,
+    ) -> serenity::CreateInteractionResponseMessage<'a> {
         let crate::CreateReply {
             content,
             embeds,
@@ -105,6 +120,7 @@ impl CreateReply {
             allowed_mentions,
             poll,
             reply: _, // can't reply to a message in interactions
+            flags,
         } = self;
 
         if let Some(content) = content {
@@ -115,6 +131,9 @@ impl CreateReply {
         }
         if let Some(components) = components {
             builder = builder.components(components);
+        }
+        if let Some(flags) = flags {
+            builder = builder.flags(flags)
         }
         if let Some(ephemeral) = ephemeral {
             builder = builder.ephemeral(ephemeral);
@@ -129,8 +148,8 @@ impl CreateReply {
     /// Serialize this response builder to a [`serenity::CreateInteractionResponseFollowup`]
     pub fn to_slash_followup_response(
         self,
-        mut builder: serenity::CreateInteractionResponseFollowup,
-    ) -> serenity::CreateInteractionResponseFollowup {
+        mut builder: serenity::CreateInteractionResponseFollowup<'a>,
+    ) -> serenity::CreateInteractionResponseFollowup<'a> {
         let crate::CreateReply {
             content,
             embeds,
@@ -139,6 +158,7 @@ impl CreateReply {
             ephemeral,
             allowed_mentions,
             poll,
+            flags,
             reply: _,
         } = self;
 
@@ -151,6 +171,9 @@ impl CreateReply {
         }
         if let Some(allowed_mentions) = allowed_mentions {
             builder = builder.allowed_mentions(allowed_mentions);
+        }
+        if let Some(flags) = flags {
+            builder = builder.flags(flags)
         }
         if let Some(ephemeral) = ephemeral {
             builder = builder.ephemeral(ephemeral);
@@ -165,8 +188,8 @@ impl CreateReply {
     /// Serialize this response builder to a [`serenity::EditInteractionResponse`]
     pub fn to_slash_initial_response_edit(
         self,
-        mut builder: serenity::EditInteractionResponse,
-    ) -> serenity::EditInteractionResponse {
+        mut builder: serenity::EditInteractionResponse<'a>,
+    ) -> serenity::EditInteractionResponse<'a> {
         let crate::CreateReply {
             content,
             embeds,
@@ -174,6 +197,7 @@ impl CreateReply {
             components,
             ephemeral: _, // can't edit ephemerality in retrospect
             allowed_mentions,
+            flags,
             // cannot edit polls.
             poll: _,
             reply: _,
@@ -188,6 +212,9 @@ impl CreateReply {
         if let Some(allowed_mentions) = allowed_mentions {
             builder = builder.allowed_mentions(allowed_mentions);
         }
+        if let Some(flags) = flags {
+            builder = builder.flags(flags)
+        }
         for attachment in attachments {
             builder = builder.new_attachment(attachment);
         }
@@ -196,7 +223,10 @@ impl CreateReply {
     }
 
     /// Serialize this response builder to a [`serenity::EditMessage`]
-    pub fn to_prefix_edit(self, mut builder: serenity::EditMessage) -> serenity::EditMessage {
+    pub fn to_prefix_edit(
+        self,
+        mut builder: serenity::EditMessage<'a>,
+    ) -> serenity::EditMessage<'a> {
         let crate::CreateReply {
             content,
             embeds,
@@ -204,6 +234,7 @@ impl CreateReply {
             components,
             ephemeral: _, // not supported in prefix
             allowed_mentions,
+            flags,
             // cannot edit polls.
             poll: _,
             reply: _, // can't edit reference message afterwards
@@ -220,6 +251,9 @@ impl CreateReply {
         if let Some(allowed_mentions) = allowed_mentions {
             builder = builder.allowed_mentions(allowed_mentions);
         }
+        if let Some(flags) = flags {
+            builder = builder.flags(flags)
+        }
         if let Some(components) = components {
             builder = builder.components(components);
         }
@@ -231,7 +265,7 @@ impl CreateReply {
     pub fn to_prefix(
         self,
         invocation_message: serenity::MessageReference,
-    ) -> serenity::CreateMessage {
+    ) -> serenity::CreateMessage<'a> {
         let crate::CreateReply {
             content,
             embeds,
@@ -241,6 +275,7 @@ impl CreateReply {
             allowed_mentions,
             poll,
             reply,
+            flags,
         } = self;
 
         let mut builder = serenity::CreateMessage::new();
@@ -255,6 +290,9 @@ impl CreateReply {
         }
         if reply {
             builder = builder.reference_message(invocation_message);
+        }
+        if let Some(flags) = flags {
+            builder = builder.flags(flags)
         }
         if let Some(poll) = poll {
             builder = builder.poll(poll);

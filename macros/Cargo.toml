@@ -1,11 +1,11 @@
 [package]
 name = "poise_macros"
-version = "0.6.1" # remember to update the version
-authors = ["kangalio <jannik.a.schaper@web.de>"]
+version = "0.6.2-bytemate" # remember to update the version
+authors = ["kangalio <jannik.a.schaper@web.de>", "bytemate"]
 edition = "2018"
-description = "Internal macro implementation crate of poise"
+description = "Internal macro implementation crate of poise (bytemate fork)"
 license = "MIT"
-repository = "https://github.com/serenity-rs/poise/"
+repository = "https://github.com/bytematebot/poise/"
 
 [lib]
 proc-macro = true

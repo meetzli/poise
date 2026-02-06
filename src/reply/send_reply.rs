@@ -1,5 +1,7 @@
 //! All functions to actually send a reply
 
+use std::borrow::Cow;
+
 use crate::serenity_prelude as serenity;
 
 /// Send a message in the given context: normal message if prefix command, interaction response
@@ -23,10 +25,10 @@ use crate::serenity_prelude as serenity;
 /// ).await?;
 /// # Ok(()) }
 /// ```
-pub async fn send_reply<U, E>(
-    ctx: crate::Context<'_, U, E>,
-    builder: crate::CreateReply,
-) -> Result<crate::ReplyHandle<'_>, serenity::Error> {
+pub async fn send_reply<'ctx, U: Send + Sync + 'static, E>(
+    ctx: crate::Context<'ctx, U, E>,
+    builder: crate::CreateReply<'_>,
+) -> Result<crate::ReplyHandle<'ctx>, serenity::Error> {
     Ok(match ctx {
         crate::Context::Prefix(ctx) => super::ReplyHandle(super::ReplyHandleInner::Prefix(
             crate::send_prefix_reply(ctx, builder).await?,
@@ -38,11 +40,11 @@ pub async fn send_reply<U, E>(
 /// Shorthand of [`send_reply`] for text-only messages
 ///
 /// Note: panics when called in an autocomplete context!
-pub async fn say_reply<U, E>(
-    ctx: crate::Context<'_, U, E>,
-    text: impl Into<String>,
-) -> Result<crate::ReplyHandle<'_>, serenity::Error> {
-    send_reply(ctx, crate::CreateReply::default().content(text.into())).await
+pub async fn say_reply<'ctx, 'arg, U: Send + Sync + 'static, E>(
+    ctx: crate::Context<'ctx, U, E>,
+    text: impl Into<Cow<'arg, str>>,
+) -> Result<crate::ReplyHandle<'ctx>, serenity::Error> {
+    send_reply(ctx, crate::CreateReply::default().content(text)).await
 }
 
 /// Send a response to an interaction (slash command or context menu command invocation).
@@ -51,10 +53,10 @@ pub async fn say_reply<U, E>(
 /// [followup](serenity::CommandInteraction::create_followup) is sent.
 ///
 /// No-op if autocomplete context
-pub async fn send_application_reply<U, E>(
-    ctx: crate::ApplicationContext<'_, U, E>,
-    builder: crate::CreateReply,
-) -> Result<crate::ReplyHandle<'_>, serenity::Error> {
+pub async fn send_application_reply<'ctx, U: Send + Sync + 'static, E>(
+    ctx: crate::ApplicationContext<'ctx, U, E>,
+    builder: crate::CreateReply<'_>,
+) -> Result<crate::ReplyHandle<'ctx>, serenity::Error> {
     let builder = ctx.reply_builder(builder);
 
     if ctx.interaction_type == crate::CommandInteractionType::Autocomplete {
@@ -70,9 +72,7 @@ pub async fn send_application_reply<U, E>(
             let builder = builder
                 .to_slash_followup_response(serenity::CreateInteractionResponseFollowup::new());
 
-            ctx.interaction
-                .create_followup(ctx.serenity_context(), builder)
-                .await?
+            ctx.interaction.create_followup(ctx.http(), builder).await?
         }))
     } else {
         let builder =
@@ -80,7 +80,7 @@ pub async fn send_application_reply<U, E>(
 
         ctx.interaction
             .create_response(
-                ctx.serenity_context(),
+                ctx.http(),
                 serenity::CreateInteractionResponse::Message(builder),
             )
             .await?;
@@ -98,9 +98,9 @@ pub async fn send_application_reply<U, E>(
 }
 
 /// Prefix-specific reply function. For more details, see [`crate::send_reply`].
-pub async fn send_prefix_reply<U, E>(
+pub async fn send_prefix_reply<U: Send + Sync + 'static, E>(
     ctx: crate::PrefixContext<'_, U, E>,
-    builder: crate::CreateReply,
+    builder: crate::CreateReply<'_>,
 ) -> Result<Box<serenity::Message>, serenity::Error> {
     let builder = ctx.reply_builder(builder);
 
@@ -150,7 +150,7 @@ pub async fn send_prefix_reply<U, E>(
         let new_response = ctx
             .msg
             .channel_id
-            .send_message(ctx.serenity_context(), builder.to_prefix(ctx.msg.into()))
+            .send_message(ctx.http(), builder.to_prefix(ctx.msg.into()))
             .await?;
         // We don't check ctx.command.reuse_response because we need to store bot responses for
         // track_deletion too

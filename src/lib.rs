@@ -57,8 +57,7 @@ To set multiple gateway events, use the OR operator:
 
 You can run Discord actions outside of commands by cloning and storing [`serenity::CacheHttp`]/
 [`Arc<serenity::Http>`](serenity::Http)/[`Arc<serenity::Cache>`](serenity::Cache). You can get
-those either from [`serenity::Context`] (passed to
-[`setup`](crate::FrameworkBuilder::setup) and all commands via
+those either from [`serenity::Context`] (passed serenity event handlers) and all commands via
 [`ctx.serenity_framework()`](crate::Context::discord)) or before starting the client via
 [`http`](serenity::Client::http) and [`cache`](serenity::Client::cache).
 
@@ -217,20 +216,15 @@ async fn error_handler(error: poise::FrameworkError<'_, Data, Error>) {
 # type Error = Box<dyn std::error::Error + Send + Sync>;
 # type Context<'a> = poise::Context<'a, (), Error>;
 # async fn my_error_function(_: poise::FrameworkError<'_, (), Error>) {}
-# #[poise::command(prefix_command)] async fn command1(ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
-# #[poise::command(prefix_command)] async fn command2(ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
-# #[poise::command(prefix_command)] async fn command3(ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
+# #[poise::command(prefix_command)] async fn command1(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
+# #[poise::command(prefix_command)] async fn command2(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
+# #[poise::command(prefix_command)] async fn command3(_ctx: Context<'_>) -> Result<(), Error> { Ok(()) }
 use poise::serenity_prelude as serenity;
 
 # async {
 // Use `Framework::builder()` to create a framework builder and supply basic data to the framework:
 
 let framework = poise::Framework::builder()
-    .setup(|_, _, _| Box::pin(async move {
-        // construct user data here (invoked when bot connects to Discord)
-        Ok(())
-    }))
-
     // Most configuration is done via the `FrameworkOptions` struct, which you can define with
     // a struct literal (hint: use `..Default::default()` to fill uninitialized
     // settings with their default value):
@@ -255,7 +249,8 @@ let framework = poise::Framework::builder()
         ..Default::default()
     }).build();
 
-let client = serenity::ClientBuilder::new("...", serenity::GatewayIntents::non_privileged())
+let token = unimplemented!();
+let client = serenity::ClientBuilder::new(token, serenity::GatewayIntents::non_privileged())
     .framework(framework).await;
 
 client.unwrap().start().await.unwrap();
@@ -279,8 +274,9 @@ functions manually:
 - [`serenity::Command::set_global_commands`]
 - [`serenity::GuildId::set_commands`]
 
-For example, you could call this function in [`FrameworkBuilder::setup`] to automatically
-register commands on startup. Also see the docs of [`builtins::create_application_commands`].
+For example, you could call this function in your event handler on [`serenity::FullEvent::Ready`] to
+automatically register commands on startup. Also see the docs of
+[`builtins::create_application_commands`].
 
 The lowest level of abstraction for registering commands is [`Command::create_as_slash_command`]
 and [`Command::create_as_context_menu_command`].
@@ -385,6 +381,7 @@ pub mod builtins;
 pub mod choice_parameter;
 pub mod cooldown;
 pub mod dispatch;
+pub mod extensions;
 pub mod framework;
 pub mod modal;
 pub mod prefix_argument;
@@ -400,7 +397,7 @@ pub mod macros {
 
 #[doc(no_inline)]
 pub use {
-    choice_parameter::*, cooldown::*, dispatch::*, framework::*, macros::*, modal::*,
+    choice_parameter::*, cooldown::*, dispatch::*, extensions::*, framework::*, macros::*, modal::*,
     prefix_argument::*, reply::*, slash_argument::*, structs::*, track_edits::*,
 };
 
@@ -423,6 +420,8 @@ pub use {async_trait::async_trait, futures_util};
 pub mod serenity_prelude {
     pub use serenity::all::*;
 }
+
+#[cfg(doc)]
 use serenity_prelude as serenity; // private alias for crate root docs intradoc-links
 
 /// Shorthand for a wrapped async future with a lifetime, used by many parts of this framework.
@@ -455,7 +454,10 @@ async fn catch_unwind_maybe<T>(
 mod tests {
     fn _assert_send_sync<T: Send + Sync>() {}
 
-    fn _test_framework_error_send_sync<U: Send + Sync + 'static, E: Send + Sync + 'static>() {
+    fn _test_framework_error_send_sync<
+        U: Send + Sync + 'static + 'static,
+        E: Send + Sync + 'static,
+    >() {
         _assert_send_sync::<crate::FrameworkError<'_, U, E>>();
     }
 }

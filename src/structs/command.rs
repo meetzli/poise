@@ -1,8 +1,13 @@
 //! The Command struct, which stores all information about a single framework command
 
+use std::borrow::Cow;
+
 use crate::{serenity_prelude as serenity, BoxFuture};
 
 use super::{CowStr, CowVec};
+
+/// Default name given to commands
+const DEFAULT_NAME: CowStr = Cow::Borrowed("A slash command");
 
 /// Type returned from `#[poise::command]` annotated functions, which contains all of the generated
 /// prefix and application commands
@@ -51,6 +56,9 @@ pub struct Command<U, E> {
     pub source_code_name: CowStr,
     /// Identifier for the category that this command will be displayed in for help commands.
     pub category: Option<CowStr>,
+    /// Identifier for the module this command belongs to. Used for automatic command registration
+    /// and grouping commands by feature/module.
+    pub module: Option<CowStr>,
     /// Whether to hide this command in help menus.
     pub hide_in_help: bool,
     /// Short description of the command. Displayed inline in help menus and similar.
@@ -155,7 +163,7 @@ impl<U, E> Eq for Command<U, E> {}
 impl<U, E> Command<U, E> {
     /// Serializes this Command into an application command option, which is the form which Discord
     /// requires subcommands to be in
-    fn create_as_subcommand(&self) -> Option<serenity::CreateCommandOption> {
+    fn create_as_subcommand(&self) -> Option<serenity::CreateCommandOption<'static>> {
         self.slash_action?;
 
         let kind = if self.subcommands.is_empty() {
@@ -164,14 +172,14 @@ impl<U, E> Command<U, E> {
             serenity::CommandOptionType::SubCommandGroup
         };
 
-        let description = self.description.as_deref().unwrap_or("A slash command");
+        let description = self.description.clone().unwrap_or(DEFAULT_NAME);
         let mut builder = serenity::CreateCommandOption::new(kind, self.name.clone(), description);
 
         for (locale, name) in self.name_localizations.iter() {
-            builder = builder.name_localized(locale.as_ref(), name.as_ref());
+            builder = builder.name_localized(locale.clone(), name.clone());
         }
         for (locale, description) in self.description_localizations.iter() {
-            builder = builder.description_localized(locale.as_ref(), description.as_ref());
+            builder = builder.description_localized(locale.clone(), description.clone());
         }
 
         if self.subcommands.is_empty() {
@@ -193,17 +201,17 @@ impl<U, E> Command<U, E> {
 
     /// Generates a slash command builder from this [`Command`] instance. This can be used
     /// to register this command on Discord's servers
-    pub fn create_as_slash_command(&self) -> Option<serenity::CreateCommand> {
+    pub fn create_as_slash_command(&self) -> Option<serenity::CreateCommand<'static>> {
         self.slash_action?;
 
         let mut builder = serenity::CreateCommand::new(self.name.clone())
-            .description(self.description.as_deref().unwrap_or("A slash command"));
+            .description(self.description.clone().unwrap_or(DEFAULT_NAME));
 
         for (locale, name) in self.name_localizations.iter() {
-            builder = builder.name_localized(locale.as_ref(), name.as_ref());
+            builder = builder.name_localized(locale.clone(), name.clone());
         }
         for (locale, description) in self.description_localizations.iter() {
-            builder = builder.description_localized(locale.as_ref(), description.as_ref());
+            builder = builder.description_localized(locale.clone(), description.clone());
         }
 
         // This is_empty check is needed because Discord special cases empty
@@ -245,18 +253,16 @@ impl<U, E> Command<U, E> {
 
     /// Generates a context menu command builder from this [`Command`] instance. This can be used
     /// to register this command on Discord's servers
-    pub fn create_as_context_menu_command(&self) -> Option<serenity::CreateCommand> {
+    pub fn create_as_context_menu_command(&self) -> Option<serenity::CreateCommand<'static>> {
         let context_menu_action = self.context_menu_action?;
 
         // TODO: localization?
-        let name = self.context_menu_name.as_deref().unwrap_or(&self.name);
-        let mut builder = serenity::CreateCommand::new(name).kind(context_menu_action.into());
-
-        // This is_empty check is needed because Discord special cases empty
-        // default_member_permissions to mean "admin-only"
-        if !self.default_member_permissions.is_empty() {
-            builder = builder.default_member_permissions(self.default_member_permissions);
-        }
+        let name = self.context_menu_name.clone().unwrap_or(self.name.clone());
+        let mut builder = serenity::CreateCommand::new(name).kind(match context_menu_action {
+            crate::ContextMenuCommandAction::User(_) => serenity::CommandType::User,
+            crate::ContextMenuCommandAction::Message(_) => serenity::CommandType::Message,
+            crate::ContextMenuCommandAction::__NonExhaustive => unreachable!(),
+        });
 
         if self.guild_only {
             builder = builder.contexts(vec![serenity::InteractionContext::Guild]);

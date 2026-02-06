@@ -17,7 +17,7 @@ pub trait SlashArgument: Sized {
     ///
     /// Only fields about the argument type are filled in. The caller is still responsible for
     /// filling in `name()`, `description()`, and possibly `required()` or other fields.
-    fn create(builder: serenity::CreateCommandOption) -> serenity::CreateCommandOption;
+    fn create(builder: serenity::CreateCommandOption<'_>) -> serenity::CreateCommandOption<'_>;
 
     /// If this is a choice parameter, returns the choices
     fn choices() -> CowVec<crate::CommandParameterChoice> {
@@ -76,7 +76,7 @@ macro_rules! argumentconvert_slash_argument {
                     extract_via_argumentconvert(ctx, interaction, value).await
                 }
 
-                fn create(builder: serenity::CreateCommandOption) -> serenity::CreateCommandOption {
+                fn create(builder: serenity::CreateCommandOption<'_>) -> serenity::CreateCommandOption<'_> {
                     builder.kind(serenity::CommandOptionType::String)
                 }
             }
@@ -115,7 +115,7 @@ macro_rules! impl_for_integer {
                 }
             }
 
-            fn create(builder: serenity::CreateCommandOption) -> serenity::CreateCommandOption {
+            fn create(builder: serenity::CreateCommandOption<'_>) -> serenity::CreateCommandOption<'_> {
                 builder
                     .min_number_value(f64::max(<$t>::MIN as f64, -9007199254740991.))
                     .max_number_value(f64::min(<$t>::MAX as f64, 9007199254740991.))
@@ -144,7 +144,7 @@ macro_rules! impl_slash_argument {
                 }
             }
 
-            fn create(builder: serenity::CreateCommandOption) -> serenity::CreateCommandOption {
+            fn create(builder: serenity::CreateCommandOption<'_>) -> serenity::CreateCommandOption<'_> {
                 builder.kind(serenity::CommandOptionType::$slash_param_type)
             }
         }
@@ -171,22 +171,26 @@ impl_slash_argument!(serenity::PartialMember, |_, _, User(_, member)| {
 });
 impl_slash_argument!(serenity::User, |_, _, User(user, _)| user.clone());
 impl_slash_argument!(serenity::UserId, |_, _, User(user, _)| user.id);
-impl_slash_argument!(serenity::Channel, |ctx, _, Channel(channel)| {
+impl_slash_argument!(serenity::Channel, |ctx, inter, Channel(channel)| {
     channel
-        .id
-        .to_channel(ctx)
+        .id()
+        .to_channel(ctx, inter.guild_id)
         .await
         .map_err(SlashArgError::Http)?
 });
-impl_slash_argument!(serenity::ChannelId, |_, _, Channel(channel)| channel.id);
-impl_slash_argument!(serenity::PartialChannel, |_, _, Channel(channel)| channel
-    .clone());
-impl_slash_argument!(serenity::GuildChannel, |ctx, _, Channel(channel)| {
-    let channel_res = channel.id.to_channel(ctx).await;
-    let channel = channel_res.map_err(SlashArgError::Http)?.guild();
-    channel.ok_or(SlashArgError::Http(serenity::Error::Model(
-        serenity::ModelError::InvalidChannelType,
-    )))?
+impl_slash_argument!(serenity::GenericChannelId, |_, _, Channel(channel)| channel
+    .id());
+impl_slash_argument!(
+    serenity::GenericInteractionChannel,
+    |_, _, Channel(channel)| channel.clone()
+);
+impl_slash_argument!(serenity::GuildChannel, |ctx, inter, Channel(channel)| {
+    channel
+        .id()
+        .expect_channel()
+        .to_guild_channel(ctx, inter.guild_id)
+        .await
+        .map_err(SlashArgError::Http)?
 });
 impl_slash_argument!(serenity::Role, |_, _, Role(role)| role.clone());
 impl_slash_argument!(serenity::RoleId, |_, _, Role(role)| role.id);

@@ -9,31 +9,6 @@ use crate::serenity_prelude as serenity;
 #[derive(derivative::Derivative)]
 #[derivative(Debug)]
 pub enum FrameworkError<'a, U, E> {
-    /// User code threw an error in user data setup
-    #[non_exhaustive]
-    Setup {
-        /// Error which was thrown in the setup code
-        error: E,
-        /// The Framework passed to the event
-        #[derivative(Debug = "ignore")]
-        framework: &'a crate::Framework<U, E>,
-        /// Discord Ready event data present during setup
-        data_about_bot: &'a serenity::Ready,
-        /// The serenity Context passed to the event
-        #[derivative(Debug = "ignore")]
-        ctx: &'a serenity::Context,
-    },
-    /// User code threw an error in generic event event handler
-    #[non_exhaustive]
-    EventHandler {
-        /// Error which was thrown in the event handler code
-        error: E,
-        /// Which event was being processed when the error occurred
-        event: &'a serenity::FullEvent,
-        /// The Framework passed to the event
-        #[derivative(Debug = "ignore")]
-        framework: crate::FrameworkContext<'a, U, E>,
-    },
     /// Error occurred during command execution
     #[non_exhaustive]
     Command {
@@ -211,12 +186,10 @@ pub enum FrameworkError<'a, U, E> {
     __NonExhaustive(std::convert::Infallible),
 }
 
-impl<'a, U, E> FrameworkError<'a, U, E> {
+impl<'a, U: Send + Sync + 'static, E> FrameworkError<'a, U, E> {
     /// Returns the [`serenity::Context`] of this error
     pub fn serenity_context(&self) -> &'a serenity::Context {
         match *self {
-            Self::Setup { ctx, .. } => ctx,
-            Self::EventHandler { framework, .. } => framework.serenity_context,
             Self::Command { ctx, .. } => ctx.serenity_context(),
             Self::SubcommandRequired { ctx } => ctx.serenity_context(),
             Self::CommandPanic { ctx, .. } => ctx.serenity_context(),
@@ -256,9 +229,7 @@ impl<'a, U, E> FrameworkError<'a, U, E> {
             Self::DmOnly { ctx, .. } => ctx,
             Self::NsfwOnly { ctx, .. } => ctx,
             Self::CommandCheckFailed { ctx, .. } => ctx,
-            Self::Setup { .. }
-            | Self::EventHandler { .. }
-            | Self::UnknownCommand { .. }
+            Self::UnknownCommand { .. }
             | Self::UnknownInteraction { .. }
             | Self::NonCommandMessage { .. }
             | Self::DynamicPrefix { .. } => return None,
@@ -306,20 +277,11 @@ macro_rules! full_command_name {
     };
 }
 
-impl<U, E: std::fmt::Display> std::fmt::Display for FrameworkError<'_, U, E> {
+impl<U: Send + Sync + 'static, E: std::fmt::Display> std::fmt::Display
+    for FrameworkError<'_, U, E>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Setup {
-                error: _,
-                framework: _,
-                data_about_bot: _,
-                ctx: _,
-            } => write!(f, "poise setup error"),
-            Self::EventHandler { event, .. } => write!(
-                f,
-                "error in {} event event handler",
-                event.snake_case_name()
-            ),
             Self::Command { error: _, ctx } => {
                 write!(f, "error in command `{}`", full_command_name!(ctx))
             }
@@ -435,13 +397,13 @@ impl<U, E: std::fmt::Display> std::fmt::Display for FrameworkError<'_, U, E> {
     }
 }
 
-impl<U: std::fmt::Debug, E: std::error::Error + 'static> std::error::Error
-    for FrameworkError<'_, U, E>
+impl<U, E> std::error::Error for FrameworkError<'_, U, E>
+where
+    U: std::fmt::Debug + Send + Sync + 'static,
+    E: std::error::Error + 'static,
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Setup { error, .. } => Some(error),
-            Self::EventHandler { error, .. } => Some(error),
             Self::Command { error, .. } => Some(error),
             Self::SubcommandRequired { .. } => None,
             Self::CommandPanic { .. } => None,

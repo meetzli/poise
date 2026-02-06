@@ -28,13 +28,17 @@ pub struct FrameworkOptions<U, E> {
     /// Default set of allowed mentions to use for all responses
     ///
     /// By default, user pings are allowed and role pings and everyone pings are filtered
-    pub allowed_mentions: Option<serenity::CreateAllowedMentions>,
+    pub allowed_mentions: Option<serenity::CreateAllowedMentions<'static>>,
     /// Invoked before every message sent using [`crate::Context::say`] or [`crate::Context::send`]
     ///
     /// Allows you to modify every outgoing message in a central place
     #[derivative(Debug = "ignore")]
-    pub reply_callback:
-        Option<fn(crate::Context<'_, U, E>, crate::CreateReply) -> crate::CreateReply>,
+    pub reply_callback: Option<
+        for<'ctx, 'arg> fn(
+            crate::Context<'ctx, U, E>,
+            crate::CreateReply<'arg>,
+        ) -> crate::CreateReply<'arg>,
+    >,
     /// If `true`, disables automatic cooldown handling before every command invocation.
     ///
     /// Useful for implementing custom cooldown behavior. See [`crate::Command::cooldowns`] and
@@ -45,16 +49,6 @@ pub struct FrameworkOptions<U, E> {
     ///
     /// **If `cache` feature is disabled, this has no effect!**
     pub require_cache_for_guild_check: bool,
-    /// Called on every Discord event. Can be used to react to non-command events, like messages
-    /// deletions or guild updates.
-    #[derivative(Debug = "ignore")]
-    pub event_handler: for<'a> fn(
-        crate::FrameworkContext<'a, U, E>,
-        &'a serenity::FullEvent,
-    ) -> BoxFuture<'a, Result<(), E>>,
-    /// Renamed to [`Self::event_handler`]!
-    #[deprecated = "renamed to event_handler"]
-    pub listener: (),
     /// Prefix command specific options.
     pub prefix_options: crate::PrefixFrameworkOptions<U, E>,
     /// User IDs which are allowed to use owners_only commands
@@ -91,11 +85,10 @@ impl<U, E> FrameworkOptions<U, E> {
 
 impl<U, E> Default for FrameworkOptions<U, E>
 where
-    U: Send + Sync,
+    U: Send + Sync + 'static,
     E: std::fmt::Display + std::fmt::Debug + Send,
 {
     fn default() -> Self {
-        #[allow(deprecated)] // we need to set the listener field
         Self {
             commands: Vec::new(),
             on_error: |error| {
@@ -105,8 +98,6 @@ where
                     }
                 })
             },
-            event_handler: |_, _| Box::pin(async { Ok(()) }),
-            listener: (),
             pre_command: |_| Box::pin(async {}),
             post_command: |_| Box::pin(async {}),
             command_check: None,

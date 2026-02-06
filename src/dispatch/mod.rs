@@ -20,10 +20,6 @@ pub struct FrameworkContext<'a, U, E> {
     pub bot_id: serenity::UserId,
     /// Framework configuration
     pub options: &'a crate::FrameworkOptions<U, E>,
-    /// Your provided user data
-    pub user_data: &'a U,
-    /// Serenity shard manager. Can be used for example to shutdown the bot
-    pub shard_manager: &'a std::sync::Arc<serenity::ShardManager>,
     // deliberately not non exhaustive because you need to create FrameworkContext from scratch
     // to run your own event loop
 }
@@ -33,7 +29,7 @@ impl<U, E> Clone for FrameworkContext<'_, U, E> {
         *self
     }
 }
-impl<'a, U, E> FrameworkContext<'a, U, E> {
+impl<'a, U: Send + Sync + 'static, E> FrameworkContext<'a, U, E> {
     /// Returns the user ID of the bot.
     pub fn bot_id(&self) -> serenity::UserId {
         #[cfg(feature = "cache")]
@@ -52,31 +48,19 @@ impl<'a, U, E> FrameworkContext<'a, U, E> {
         self.options
     }
 
-    /// Returns the serenity's client shard manager.
-    ///
-    /// This function exists for API compatiblity with [`crate::Framework`]. On this type, you can
-    /// also just access the public `shard_manager` field.
-    pub fn shard_manager(&self) -> std::sync::Arc<serenity::ShardManager> {
-        self.shard_manager.clone()
-    }
-
     /// Retrieves user data
-    ///
-    /// This function exists for API compatiblity with [`crate::Framework`]. On this type, you can
-    /// also just access the public `user_data` field.
-    #[allow(clippy::unused_async)] // for API compatibility with Framework
-    pub async fn user_data(&self) -> &'a U {
-        self.user_data
+    pub fn user_data(&self) -> std::sync::Arc<U> {
+        self.serenity_context.data::<U>()
     }
 }
 
 /// Central event handling function of this library
-pub async fn dispatch_event<U: Send + Sync, E>(
+pub async fn dispatch_event<U: Send + Sync + 'static, E>(
     framework: crate::FrameworkContext<'_, U, E>,
-    event: serenity::FullEvent,
+    event: &serenity::FullEvent,
 ) {
-    match &event {
-        serenity::FullEvent::Message { new_message } => {
+    match event {
+        serenity::FullEvent::Message { new_message, .. } => {
             let invocation_data = tokio::sync::Mutex::new(Box::new(()) as _);
             let mut parent_commands = Vec::new();
             let trigger = crate::MessageDispatchTrigger::MessageCreate;
@@ -94,7 +78,7 @@ pub async fn dispatch_event<U: Send + Sync, E>(
         }
         serenity::FullEvent::MessageUpdate { event, .. } => {
             if let Some(edit_tracker) = &framework.options.prefix_options.edit_tracker {
-                let msg = edit_tracker.write().unwrap().process_message_update(
+                let result = edit_tracker.write().unwrap().process_message_update(
                     event,
                     framework
                         .options()
@@ -102,7 +86,7 @@ pub async fn dispatch_event<U: Send + Sync, E>(
                         .ignore_edits_if_not_yet_responded,
                 );
 
-                if let Some((msg, previously_tracked)) = msg {
+                if let Some(previously_tracked) = result {
                     let invocation_data = tokio::sync::Mutex::new(Box::new(()) as _);
                     let mut parent_commands = Vec::new();
                     let trigger = match previously_tracked {
@@ -111,7 +95,7 @@ pub async fn dispatch_event<U: Send + Sync, E>(
                     };
                     if let Err(error) = prefix::dispatch_message(
                         framework,
-                        &msg,
+                        &event.message,
                         trigger,
                         &invocation_data,
                         &mut parent_commands,
@@ -132,7 +116,10 @@ pub async fn dispatch_event<U: Send + Sync, E>(
                     .unwrap()
                     .process_message_delete(*deleted_message_id);
                 if let Some(bot_response) = bot_response {
-                    if let Err(e) = bot_response.delete(framework.serenity_context).await {
+                    if let Err(e) = bot_response
+                        .delete(&framework.serenity_context.http, None)
+                        .await
+                    {
                         tracing::warn!("failed to delete bot response: {}", e);
                     }
                 }
@@ -140,6 +127,7 @@ pub async fn dispatch_event<U: Send + Sync, E>(
         }
         serenity::FullEvent::InteractionCreate {
             interaction: serenity::Interaction::Command(interaction),
+            ..
         } => {
             let invocation_data = tokio::sync::Mutex::new(Box::new(()) as _);
             let mut parent_commands = Vec::new();
@@ -158,6 +146,7 @@ pub async fn dispatch_event<U: Send + Sync, E>(
         }
         serenity::FullEvent::InteractionCreate {
             interaction: serenity::Interaction::Autocomplete(interaction),
+            ..
         } => {
             let invocation_data = tokio::sync::Mutex::new(Box::new(()) as _);
             let mut parent_commands = Vec::new();
@@ -175,16 +164,5 @@ pub async fn dispatch_event<U: Send + Sync, E>(
             }
         }
         _ => {}
-    }
-
-    // Do this after the framework's Ready handling, so that get_user_data() doesnt
-    // potentially block infinitely
-    if let Err(error) = (framework.options.event_handler)(framework, &event).await {
-        let error = crate::FrameworkError::EventHandler {
-            error,
-            event: &event,
-            framework,
-        };
-        (framework.options.on_error)(error).await;
     }
 }

@@ -2,9 +2,31 @@
 
 use crate::serenity_prelude as serenity;
 
+/// Fetches the NSFW status of the channel (or thread) the command was executed in.
+async fn check_nsfw_channel<U: Send + Sync + 'static, E>(ctx: crate::Context<'_, U, E>) -> bool {
+    match ctx.channel().await {
+        Some(serenity::Channel::Private(_)) => true,
+        Some(serenity::Channel::Guild(ch)) => ch.nsfw,
+        Some(serenity::Channel::GuildThread(th)) => {
+            let guild_id = th.base.guild_id;
+            match th.parent_id.to_guild_channel(ctx, Some(guild_id)).await {
+                Ok(ch) => ch.nsfw,
+                Err(e) => {
+                    tracing::warn!("Error when getting thread parent for NSFW check: {e}");
+                    false
+                }
+            }
+        }
+        None | Some(_) => {
+            tracing::warn!("Error when getting channel for NSFW check");
+            false
+        }
+    }
+}
+
 /// See [`check_permissions_and_cooldown`]. Runs the check only for a single command. The caller
 /// should call this multiple time for each parent command to achieve the check inheritance logic.
-async fn check_permissions_and_cooldown_single<'a, U, E>(
+async fn check_permissions_and_cooldown_single<'a, U: Send + Sync + 'static, E>(
     ctx: crate::Context<'a, U, E>,
     cmd: &'a crate::Command<U, E>,
 ) -> Result<(), crate::FrameworkError<'a, U, E>> {
@@ -39,21 +61,8 @@ async fn check_permissions_and_cooldown_single<'a, U, E>(
         return Err(crate::FrameworkError::DmOnly { ctx });
     }
 
-    if cmd.nsfw_only {
-        let channel = match ctx.channel_id().to_channel(ctx.serenity_context()).await {
-            Ok(channel) => channel,
-            Err(e) => {
-                tracing::warn!("Error when getting channel: {}", e);
-
-                return Err(crate::FrameworkError::NsfwOnly { ctx });
-            }
-        };
-
-        if let serenity::Channel::Guild(guild_channel) = channel {
-            if !guild_channel.nsfw {
-                return Err(crate::FrameworkError::NsfwOnly { ctx });
-            }
-        }
+    if cmd.nsfw_only && !check_nsfw_channel(ctx).await {
+        return Err(crate::FrameworkError::NsfwOnly { ctx });
     }
 
     // Make sure that user has required permissions
@@ -120,7 +129,7 @@ async fn check_permissions_and_cooldown_single<'a, U, E>(
 /// argument parsing.
 /// (A command that didn't even get past argument parsing shouldn't trigger cooldowns)
 #[allow(clippy::needless_lifetimes)] // false positive (clippy issue 7271)
-pub async fn check_permissions_and_cooldown<'a, U, E>(
+pub async fn check_permissions_and_cooldown<'a, U: Send + Sync + 'static, E>(
     ctx: crate::Context<'a, U, E>,
 ) -> Result<(), crate::FrameworkError<'a, U, E>> {
     for parent_command in ctx.parent_commands() {

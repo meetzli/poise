@@ -11,7 +11,7 @@ mod paginate;
 #[cfg(feature = "chrono")]
 pub use paginate::*;
 
-use crate::{serenity::CreateAllowedMentions, serenity_prelude as serenity, CreateReply};
+use crate::{serenity_prelude as serenity, serenity_prelude::CreateAllowedMentions, CreateReply};
 
 /// An error handler that logs errors either via the [`tracing`] crate or via a Discord message. Set
 /// up a logger like tracing subscriber
@@ -29,18 +29,12 @@ use crate::{serenity::CreateAllowedMentions, serenity_prelude as serenity, Creat
 /// }
 /// # };
 /// ```
-pub async fn on_error<U, E: std::fmt::Display + std::fmt::Debug>(
-    error: crate::FrameworkError<'_, U, E>,
-) -> Result<(), serenity::Error> {
+pub async fn on_error<U, E>(error: crate::FrameworkError<'_, U, E>) -> Result<(), serenity::Error>
+where
+    U: Send + Sync + 'static,
+    E: std::fmt::Display + std::fmt::Debug,
+{
     match error {
-        crate::FrameworkError::Setup { error, .. } => {
-            eprintln!("Error in user data setup: {}", error);
-        }
-        crate::FrameworkError::EventHandler { error, event, .. } => tracing::error!(
-            "User event event handler encountered an error on {} event: {}",
-            event.snake_case_name(),
-            error
-        ),
         crate::FrameworkError::Command { ctx, error } => {
             let error = error.to_string();
             eprintln!("An error occured in a command: {}", error);
@@ -225,16 +219,16 @@ pub async fn on_error<U, E: std::fmt::Display + std::fmt::Debug>(
 ///
 /// See `examples/feature_showcase` for an example
 #[allow(clippy::unused_async)] // Required for the return type
-pub async fn autocomplete_command<'a, U, E>(
+pub async fn autocomplete_command<'a, U: Send + Sync + 'static, E>(
     ctx: crate::Context<'a, U, E>,
     partial: &'a str,
-) -> serenity::CreateAutocompleteResponse {
+) -> serenity::CreateAutocompleteResponse<'a> {
     let commands = ctx.framework().options.commands.iter();
     let filtered_commands = commands
         .filter(|cmd| cmd.name.starts_with(partial))
         .take(25);
 
-    let choices = filtered_commands
+    let choices: Vec<_> = filtered_commands
         .map(|cmd| serenity::AutocompleteChoice::from(cmd.name.as_ref()))
         .collect();
 
@@ -254,7 +248,9 @@ pub async fn autocomplete_command<'a, U, E>(
 /// > - **A public server** (7123 members)
 /// > - [3 private servers with 456 members total]
 #[cfg(feature = "cache")]
-pub async fn servers<U, E>(ctx: crate::Context<'_, U, E>) -> Result<(), serenity::Error> {
+pub async fn servers<U: Send + Sync + 'static, E>(
+    ctx: crate::Context<'_, U, E>,
+) -> Result<(), serenity::Error> {
     use std::fmt::Write as _;
 
     let show_private_guilds = ctx.framework().options().owners.contains(&ctx.author().id);
@@ -262,7 +258,7 @@ pub async fn servers<U, E>(ctx: crate::Context<'_, U, E>) -> Result<(), serenity
     // Aggregate all guilds and sort them by size
     let mut hidden_guilds = 0;
     let mut hidden_guilds_members = 0;
-    let mut shown_guilds = Vec::<(String, u64)>::new();
+    let mut shown_guilds = Vec::new();
     for guild_id in ctx.cache().guilds() {
         match ctx.cache().guild(guild_id) {
             Some(guild) => {

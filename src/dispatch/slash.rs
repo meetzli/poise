@@ -5,7 +5,6 @@ use crate::serenity_prelude as serenity;
 /// Check if the interaction with the given name and arguments matches any framework command
 fn find_matching_command<'a, 'b, U, E>(
     interaction_name: &str,
-    interaction_kind: serenity::CommandType,
     interaction_options: &'b [serenity::ResolvedOption<'b>],
     commands: &'a [crate::Command<U, E>],
     parent_commands: &mut Vec<&'a crate::Command<U, E>>,
@@ -15,19 +14,6 @@ fn find_matching_command<'a, 'b, U, E>(
             && Some(interaction_name) != cmd.context_menu_name.as_deref()
         {
             return None;
-        }
-
-        // Discord allows commands with the same name as long as they have different types.
-        match interaction_kind {
-            serenity::CommandType::ChatInput => {
-                cmd.slash_action?;
-            }
-            serenity::CommandType::User | serenity::CommandType::Message => {
-                cmd.context_menu_action
-                    .map(serenity::CommandType::from)
-                    .filter(|kind| kind == &interaction_kind)?;
-            }
-            _ => unimplemented!(),
         }
 
         if let Some((sub_name, sub_interaction)) =
@@ -40,13 +26,7 @@ fn find_matching_command<'a, 'b, U, E>(
                 })
         {
             parent_commands.push(cmd);
-            find_matching_command(
-                sub_name,
-                interaction_kind,
-                sub_interaction,
-                &cmd.subcommands,
-                parent_commands,
-            )
+            find_matching_command(sub_name, sub_interaction, &cmd.subcommands, parent_commands)
         } else {
             Some((cmd, interaction_options))
         }
@@ -70,7 +50,6 @@ fn extract_command<'a, U, E>(
 ) -> Result<crate::ApplicationContext<'a, U, E>, crate::FrameworkError<'a, U, E>> {
     let search_result = find_matching_command(
         &interaction.data.name,
-        interaction.data.kind,
         options,
         &framework.options.commands,
         parent_commands,
@@ -96,7 +75,7 @@ fn extract_command<'a, U, E>(
 
 /// Given an interaction, finds the matching framework command and checks if the user is allowed access
 #[allow(clippy::too_many_arguments)] // We need to pass them all in to create Context.
-pub async fn extract_command_and_run_checks<'a, U, E>(
+pub async fn extract_command_and_run_checks<'a, U: Send + Sync + 'static, E>(
     framework: crate::FrameworkContext<'a, U, E>,
     interaction: &'a serenity::CommandInteraction,
     interaction_type: crate::CommandInteractionType,
@@ -120,7 +99,7 @@ pub async fn extract_command_and_run_checks<'a, U, E>(
 
 /// Given the extracted application command data from [`extract_command`], runs the command,
 /// including all the before and after code like checks.
-async fn run_command<U, E>(
+async fn run_command<U: Send + Sync + 'static, E>(
     ctx: crate::ApplicationContext<'_, U, E>,
 ) -> Result<(), crate::FrameworkError<'_, U, E>> {
     super::common::check_permissions_and_cooldown(ctx.into()).await?;
@@ -179,7 +158,7 @@ async fn run_command<U, E>(
 }
 
 /// Dispatches this interaction onto framework commands, i.e. runs the associated command
-pub async fn dispatch_interaction<'a, U, E>(
+pub async fn dispatch_interaction<'a, U: Send + Sync + 'static, E>(
     framework: crate::FrameworkContext<'a, U, E>,
     interaction: &'a serenity::CommandInteraction,
     // Need to pass this in from outside because of lifetime issues
@@ -212,7 +191,7 @@ pub async fn dispatch_interaction<'a, U, E>(
 
 /// Given the extracted application command data from [`extract_command`], runs the autocomplete
 /// callbacks, including all the before and after code like checks.
-async fn run_autocomplete<U, E>(
+async fn run_autocomplete<U: Send + Sync + 'static, E>(
     ctx: crate::ApplicationContext<'_, U, E>,
 ) -> Result<(), crate::FrameworkError<'_, U, E>> {
     super::common::check_permissions_and_cooldown(ctx.into()).await?;
@@ -245,9 +224,6 @@ async fn run_autocomplete<U, E>(
         _ => return Ok(()),
     };
 
-    #[allow(unused_imports)]
-    use ::serenity::json::*; // as_str() access via trait for simd-json
-
     // Generate an autocomplete response
     let autocomplete_response = autocomplete_callback(ctx, partial_input).await;
 
@@ -255,7 +231,7 @@ async fn run_autocomplete<U, E>(
     if let Err(e) = ctx
         .interaction
         .create_response(
-            &ctx.framework.serenity_context,
+            ctx.http(),
             serenity::CreateInteractionResponse::Autocomplete(autocomplete_response),
         )
         .await
@@ -268,7 +244,7 @@ async fn run_autocomplete<U, E>(
 
 /// Dispatches this interaction onto framework commands, i.e. runs the associated autocomplete
 /// callback
-pub async fn dispatch_autocomplete<'a, U, E>(
+pub async fn dispatch_autocomplete<'a, U: Send + Sync + 'static, E>(
     framework: crate::FrameworkContext<'a, U, E>,
     interaction: &'a serenity::CommandInteraction,
     // Need to pass the following in from outside because of lifetime issues
